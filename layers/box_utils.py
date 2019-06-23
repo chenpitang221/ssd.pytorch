@@ -68,6 +68,13 @@ def jaccard(box_a, box_b):
     return inter / union  # [A,B]
 
 
+# truths = targets[idx][:, :-1].data  # 取出target中的坐标 [num_objs, 4]
+# defaults = priors.data              # 先验框anchors  [8732, 4]
+# variances                           # [0.1, 0.2]
+# labels = targets[idx][:, -1].data   # 取出target中每个目标实体对应的类别 [batch_size, num_objs]
+# loc_t                               # [batch_size, 8732, 4]
+# conf_t                              # [batch_size, 8732]
+# idx                                 # batch数据的index
 def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     """Match each prior box with the ground truth box of the highest jaccard
     overlap, encode the bounding boxes, then return the matched indices
@@ -85,31 +92,86 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     Return:
         The matched indices corresponding to 1)location and 2)confidence preds.
     """
-    # jaccard index
+
+    print truths.shape, priors.shape, labels.shape, loc_t.shape, conf_t.shape
+    print truths
+    print labels
+
+    """
+    (22, 4) (8732, 4) (22,) (2, 8732, 4) (2, 8732)
+    tensor([[0.5410, 0.3665, 0.5615, 0.4030],
+            [0.5648, 0.3678, 0.5726, 0.4033],
+            [0.2499, 0.5137, 0.2587, 0.5307],
+            [0.2630, 0.5054, 0.2691, 0.5200],
+            [0.2125, 0.5057, 0.2210, 0.5340],
+            [0.5635, 0.4664, 0.6070, 0.6341],
+            [0.5416, 0.4639, 0.5682, 0.5646],
+            [0.4424, 0.4675, 0.4740, 0.5798],
+            [0.4692, 0.4830, 0.4768, 0.5564],
+            [0.4359, 0.4692, 0.4540, 0.5672],
+            [0.4130, 0.4774, 0.4377, 0.5895],
+            [0.3746, 0.4907, 0.3873, 0.5456],
+            [0.3740, 0.4784, 0.3857, 0.4990],
+            [0.3511, 0.4749, 0.3743, 0.5662],
+            [0.4899, 0.4929, 0.5432, 0.5268],
+            [0.3528, 0.4882, 0.3678, 0.5301],
+            [0.2655, 0.4871, 0.2800, 0.5418],
+            [0.2384, 0.4906, 0.2557, 0.5616],
+            [0.3864, 0.4833, 0.4070, 0.5620],
+            [0.2118, 0.4871, 0.2152, 0.4967],
+            [0.3121, 0.4748, 0.3367, 0.5665],
+            [0.2064, 0.2220, 0.2064, 0.2220]])
+    tensor([74., 74., 26., 26., 26.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,
+            13., 26.,  0.,  0.,  0., 24.,  0.,  0.])
+            
+    (2, 4) (8732, 4) (2,) (2, 8732, 4) (2, 8732)
+    tensor([[0.3050, 0.9739, 0.3421, 1.0000],
+            [0.3560, 0.9702, 0.4255, 1.0000]])
+    tensor([18., 18.])
+    """
+
+    # jaccard相似系数(IOU)：计算目标实体框与先验框anchors的IOU shape: [box_a.size(0), box_b.size(0)] => [num_objs, 8732]
     overlaps = jaccard(
-        truths,
-        point_form(priors)
+        truths,             # shape: (num_objs, 4)
+        point_form(priors)  # (x,y,w,h) => (x1,y1, x2,y2) shape: (8732, 4)
     )
     # (Bipartite Matching)
-    # [1,num_objects] best prior for each ground truth
+    # 获取每个目标实体框对应的最优先验框anchor shape: [1, num_objs]
     best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
-    # [1,num_priors] best ground truth for each prior
+    # 获取每个先验框对应的最优目标实体框truth  shape: [1, 8732]
     best_truth_overlap, best_truth_idx = overlaps.max(0, keepdim=True)
     best_truth_idx.squeeze_(0)
     best_truth_overlap.squeeze_(0)
     best_prior_idx.squeeze_(1)
     best_prior_overlap.squeeze_(1)
+
+    # best_truth_overlap保存了所有先验框对应的最优ground_truth的IOU值
+    # IOU值的范围是[0, 1]，为了突出针对ground_truth的最优anchors，将最优anchors的IOU值设置为2
     best_truth_overlap.index_fill_(0, best_prior_idx, 2)  # ensure best prior
+
+
     # TODO refactor: index  best_prior_idx with long tensor
-    # ensure every gt matches with its prior of max overlap
+    # 再次确认，最优anchors对应了最优ground_truth, 一般情况下best_truth_idx[best_prior_idx[j]]等于j，这一步只是再次确认。
     for j in range(best_prior_idx.size(0)):
         best_truth_idx[best_prior_idx[j]] = j
-    matches = truths[best_truth_idx]          # Shape: [num_priors,4]
-    conf = labels[best_truth_idx] + 1         # Shape: [num_priors]
+
+    # 每个先验框anchor对应目标ground_truth的真实坐标 Shape: [8732, 4]
+    matches = truths[best_truth_idx]
+    # 每个先验框anchor对应目标ground_truth的类别标签 Shape: [8732],
+    # 注意，这里需要加1，因为预测的类别中第0位是置信度，类别是从1开始计数。
+    conf = labels[best_truth_idx] + 1
+
+    # 把IOU小于阈值的设置为非置信先验框，
+    # 从这里可以看出conf有两种功能，当conf值等于0时表示置信度，代表非置信；大于0时表示类别，也就默认置信了。
     conf[best_truth_overlap < threshold] = 0  # label as background
+    # 根据ground_truth坐标信息和先验框坐标信息，得到先验框坐标转为ground_truth坐标的偏移系数（offsets）
     loc = encode(matches, priors, variances)
+
+    # 该流程最终得到了当前图像中，先验框转为真实坐标的偏移系数（loc_t）和先验框的置信度/类别（conf_t）
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
+
+
 
 
 def encode(matched, priors, variances):
@@ -131,7 +193,7 @@ def encode(matched, priors, variances):
     g_cxcy /= (variances[0] * priors[:, 2:])
     # match wh / prior wh
     g_wh = (matched[:, 2:] - matched[:, :2]) / priors[:, 2:]
-    g_wh = torch.log(g_wh) / variances[1]
+    g_wh = torch.log(g_wh + 1e-10) / variances[1]
     # return target for smooth_l1_loss
     return torch.cat([g_cxcy, g_wh], 1)  # [num_priors,4]
 

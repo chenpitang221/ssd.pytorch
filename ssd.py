@@ -1,3 +1,4 @@
+# coding:utf8
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -72,34 +73,51 @@ class SSD(nn.Module):
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
+            # print self.vgg[k]
             x = self.vgg[k](x)
+            # print x.shape
 
         s = self.L2Norm(x)
+        print s.shape
         sources.append(s)
 
         # apply vgg up to fc7
         for k in range(23, len(self.vgg)):
+            # print self.vgg[k]
             x = self.vgg[k](x)
+            # print x.shape
+        print x.shape
         sources.append(x)
 
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
+            # print v
             x = F.relu(v(x), inplace=True)
+            # print x.shape
             if k % 2 == 1:
+                print x.shape
                 sources.append(x)
 
         # apply multibox head to source layers
         for (x, l, c) in zip(sources, self.loc, self.conf):
+            # print l
+            # print x.shape
+            # print l(x).shape
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
+
+        for o in loc:
+            print o.view(o.size(0), -1, 4).shape
+
+        # loc = torch.cat([o.view(o.size(0), -1, 4) for o in loc], 1)
+        # print loc.shape
 
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1)
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         if self.phase == "test":
             output = self.detect(
                 loc.view(loc.size(0), -1, 4),                   # loc preds
-                self.softmax(conf.view(conf.size(0), -1,
-                             self.num_classes)),                # conf preds
+                self.softmax(conf.view(conf.size(0), -1, self.num_classes)),  # conf preds
                 self.priors.type(type(x.data))                  # default boxes
             )
         else:
@@ -172,6 +190,7 @@ def multibox(vgg, extra_layers, cfg, num_classes):
                                  cfg[k] * 4, kernel_size=3, padding=1)]
         conf_layers += [nn.Conv2d(vgg[v].out_channels,
                         cfg[k] * num_classes, kernel_size=3, padding=1)]
+
     for k, v in enumerate(extra_layers[1::2], 2):
         loc_layers += [nn.Conv2d(v.out_channels, cfg[k]
                                  * 4, kernel_size=3, padding=1)]
@@ -194,7 +213,7 @@ mbox = {
     '512': [],
 }
 
-
+# 默认为voc数据集配置
 def build_ssd(phase, size=300, num_classes=21):
     if phase != "test" and phase != "train":
         print("ERROR: Phase: " + phase + " not recognized")
@@ -207,3 +226,19 @@ def build_ssd(phase, size=300, num_classes=21):
                                      add_extras(extras[str(size)], 1024),
                                      mbox[str(size)], num_classes)
     return SSD(phase, size, base_, extras_, head_, num_classes)
+
+
+if __name__ == '__main__':
+    base_, extras_, head_ = multibox(vgg(base[str(300)], 3),
+                                     add_extras(extras[str(300)], 1024),
+                                     mbox[str(300)], 21)
+
+    model = SSD('train', 300, base_, extras_, head_, 21)
+
+    # print model.vgg
+
+    input_tensor = torch.rand((1, 3, 300, 300))
+    input_variable = torch.autograd.Variable(input_tensor)
+    output = model(input_variable)
+
+    print output[0].shape, output[1].shape, output[2].shape

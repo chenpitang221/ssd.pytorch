@@ -83,10 +83,11 @@ class COCODetection(data.Dataset):
         in the target (bbox) and transforms it.
     """
 
-    def __init__(self, root, image_set='trainval35k', transform=None,
+    def __init__(self, root, image_set='val2014', transform=None,
                  target_transform=COCOAnnotationTransform(), dataset_name='MS COCO'):
         sys.path.append(osp.join(root, COCO_API))
-        from pycocotools.coco import COCO
+        # from pycocotools.coco import COCO
+        from coco_parse import COCO
         self.root = osp.join(root, IMAGES, image_set)
         self.coco = COCO(osp.join(root, ANNOTATIONS,
                                   INSTANCES_SET.format(image_set)))

@@ -2,7 +2,8 @@
 import os.path
 
 # gets home dir cross platform
-HOME = os.path.expanduser("~")
+# HOME = os.path.expanduser("/home/work/cuixiankun/object_detection/ssd.pytorch-master")
+HOME = os.path.expanduser("/Users/cuixiankun01/project/baidu/object_detection/ssd.pytorch-master")
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
